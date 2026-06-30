@@ -8,34 +8,32 @@ local playerGui = player:WaitForChild("PlayerGui")
 local xrayActive = false
 local XRAY_TRANSPARENCY = 0.25 
 
--- 1. Non-dirt filler blocks that will become see-through
-local OTHER_FILLER = {
-	["Stone"] = true,
-	["Deepslate"] = true,
-	["Netherrack"] = true,
-	["SoulSand"] = true,
-	["EndStone"] = true
+-- Elements we want to completely IGNORE so they stay fully visible
+local IGNORE_LIST = {
+	["Diamond"] = true,
+	["Iron"] = true,
+	["Gold"] = true,
+	["Coal"] = true,
+	["Ore"] = true,
+	["Chest"] = true,
+	["Spawner"] = true
 }
 
 local activeHighlights = {}
 
--- 2. Smart function to automatically catch any block containing the word "dirt"
-local function isDirtBlock(name)
+-- Checks if a block should get a red outline (Dirt / Netherrack types)
+local function shouldOutline(name)
 	local lowerName = string.lower(name)
-	-- Explicitly ignores grass blocks so they don't get lines
-	if string.find(lowerName, "grass") then return false end 
-	-- Catches "Dirt", "dirt", "CoarseDirt", "dirt_block", etc.
-	return string.find(lowerName, "dirt") ~= nil or string.find(lowerName, "mud") ~= nil
+	if string.find(lowerName, "grass") then return false end
+	return string.find(lowerName, "dirt") ~= nil or string.find(lowerName, "nether") ~= nil or string.find(lowerName, "mud") ~= nil
 end
 
--- 3. Handles adding and removing the outlines smoothly
 local function manageHighlight(part, state)
 	if state then
-		-- Only outlines dirt variants and netherrack blocks
-		if (isDirtBlock(part.Name) or part.Name == "Netherrack") and not activeHighlights[part] then
+		if shouldOutline(part.Name) and not activeHighlights[part] then
 			local hl = Instance.new("Highlight")
 			hl.FillTransparency = 1 
-			hl.OutlineColor = Color3.fromRGB(255, 85, 85) -- Red outline
+			hl.OutlineColor = Color3.fromRGB(255, 85, 85)
 			hl.OutlineTransparency = 0.1 
 			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
 			hl.Adornee = part
@@ -50,11 +48,25 @@ local function manageHighlight(part, state)
 	end
 end
 
--- 4. Scans the workspace and applies changes
 local function applyXray()
 	for _, object in ipairs(workspace:GetDescendants()) do
+		-- Target any physical block mesh or part in the world
 		if object:IsA("BasePart") then
-			if OTHER_FILLER[object.Name] or isDirtBlock(object.Name) then
+			local nameLower = string.lower(object.Name)
+			
+			-- Make sure we aren't hiding your own character, tools, or skyboxes
+			local isPlayer = object:FindFirstAncestorOfClass("Model") and object:FindFirstAncestorOfClass("Model"):FindFirstChild("Humanoid")
+			local isImportant = false
+			
+			for ignoreName, _ in pairs(IGNORE_LIST) do
+				if string.find(string.lower(object.Name), string.lower(ignoreName)) then
+					isImportant = true
+					break
+				end
+			end
+			
+			-- If it's a regular world block, apply X-ray
+			if not isPlayer and not isImportant and object.CanCollide then
 				if xrayActive then
 					if not object:GetAttribute("OriginalTransparency") then
 						object:SetAttribute("OriginalTransparency", object.Transparency)
@@ -72,7 +84,7 @@ local function applyXray()
 end
 
 -- =========================================================
--- CREATE MOVEABLE MOBILE UI BUTTON (PERFECT FOR IPAD)
+-- MOVEABLE MOBILE UI BUTTON
 -- =========================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "XrayMobileGui"
@@ -81,10 +93,10 @@ screenGui.Parent = playerGui
 
 local xrayButton = Instance.new("TextButton")
 xrayButton.Size = UDim2.new(0, 110, 0, 50)
-xrayButton.Position = UDim2.new(0.1, 0, 0.4, 0) -- Starts on the mid-left side
+xrayButton.Position = UDim2.new(0.02, 0, 0.35, 0)
 xrayButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 xrayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-xrayButton.TextSize = 18
+xrayButton.TextSize = 16
 xrayButton.Text = "X-Ray: OFF"
 xrayButton.Font = Enum.Font.SourceSansBold
 xrayButton.Active = true
@@ -94,20 +106,19 @@ local uiCorner = Instance.new("UICorner")
 uiCorner.CornerRadius = UDim.new(0, 8)
 uiCorner.Parent = xrayButton
 
--- Button Tap functionality
 xrayButton.MouseButton1Click:Connect(function()
 	xrayActive = not xrayActive
 	if xrayActive then
 		xrayButton.Text = "X-Ray: ON"
-		xrayButton.BackgroundColor3 = Color3.fromRGB(255, 85, 85) -- Active color
+		xrayButton.BackgroundColor3 = Color3.fromRGB(255, 85, 85)
 	else
 		xrayButton.Text = "X-Ray: OFF"
-		xrayButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40) -- Idle color
+		xrayButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	end
 	applyXray()
 end)
 
--- Draggable logic for touch screen dragging
+-- Dragging logic
 local dragging = false
 local dragInput, dragStart, startPos
 
@@ -116,11 +127,8 @@ xrayButton.InputBegan:Connect(function(input)
 		dragging = true
 		dragStart = input.Position
 		startPos = xrayButton.Position
-		
 		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-			end
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
 		end)
 	end
 end)
@@ -138,11 +146,13 @@ UserInputService.InputChanged:Connect(function(input)
 	end
 end)
 
--- Updates newly placed/loaded terrain dynamically
 workspace.DescendantAdded:Connect(function(object)
-	if xrayActive and object:IsA("BasePart") and (OTHER_FILLER[object.Name] or isDirtBlock(object.Name)) then
-		object:SetAttribute("OriginalTransparency", object.Transparency)
-		object.Transparency = XRAY_TRANSPARENCY
-		manageHighlight(object, true)
+	if xrayActive and object:IsA("BasePart") and object.CanCollide then
+		local isPlayer = object:FindFirstAncestorOfClass("Model") and object:FindFirstAncestorOfClass("Model"):FindFirstChild("Humanoid")
+		if not isPlayer then
+			object:SetAttribute("OriginalTransparency", object.Transparency)
+			object.Transparency = XRAY_TRANSPARENCY
+			manageHighlight(object, true)
+		end
 	end
 end)
